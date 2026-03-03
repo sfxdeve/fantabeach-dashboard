@@ -1,4 +1,4 @@
-import { httpClient } from "~/lib/api/client";
+import { ApiError, httpClient } from "~/lib/api/client";
 import type {
   AuditLog,
   AuditLogFilters,
@@ -48,6 +48,11 @@ export class HttpAdminApi {
       accessToken: string;
       user: { id: string; name: string; email: string; role: string };
     }>("/api/v1/auth/login", input);
+
+    if (data.user.role !== "ADMIN") {
+      throw new ApiError("Admin access required", "FORBIDDEN");
+    }
+
     return {
       token: data.accessToken,
       user: {
