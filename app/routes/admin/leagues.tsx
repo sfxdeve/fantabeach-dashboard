@@ -36,7 +36,7 @@ import {
   FieldLabel,
 } from "~/components/ui/field";
 import { HttpAdminApi } from "~/lib/api/http-admin-api";
-import type { League, LeagueType, RankingMode } from "~/lib/api/types";
+import type { League, LeagueType } from "~/lib/api/types";
 
 const adminApi = new HttpAdminApi();
 
@@ -113,9 +113,7 @@ export default function LeaguesPage() {
   const createForm = useForm({
     defaultValues: {
       name: "",
-      type: "PUBLIC" as LeagueType,
       championshipId: "",
-      rankingMode: "OVERALL" as RankingMode,
       rosterSize: "10",
       startersSize: "5",
       budgetPerTeam: "100",
@@ -144,24 +142,14 @@ export default function LeaguesPage() {
         prize2nd: value.prize2nd || undefined,
         prize3rd: value.prize3rd || undefined,
       };
-      if (value.type === "PUBLIC") {
-        await createMutation.mutateAsync({ type: "PUBLIC", ...base });
-      } else {
-        await createMutation.mutateAsync({
-          type: "PRIVATE",
-          rankingMode: value.rankingMode,
-          ...base,
-        });
-      }
+      await createMutation.mutateAsync({ type: "PUBLIC", ...base });
     },
   });
 
   function openCreate() {
     createForm.reset({
       name: "",
-      type: "PUBLIC",
       championshipId: championships[0]?.id ?? "",
-      rankingMode: "OVERALL",
       rosterSize: "10",
       startersSize: "5",
       budgetPerTeam: "100",
@@ -279,82 +267,18 @@ export default function LeaguesPage() {
                 </createForm.Field>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <createForm.Field name="type">
-                    {(field) => (
-                      <Field>
-                        <FieldLabel>Type</FieldLabel>
-                        <Select
-                          value={field.state.value}
-                          onValueChange={(v) =>
-                            field.handleChange(v as LeagueType)
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select type">
-                              {(value) =>
-                                value === "PUBLIC"
-                                  ? "Public"
-                                  : value === "PRIVATE"
-                                    ? "Private"
-                                    : undefined
-                              }
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="PUBLIC">Public</SelectItem>
-                            <SelectItem value="PRIVATE">Private</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </Field>
-                    )}
-                  </createForm.Field>
-
-                  <createForm.Subscribe selector={(s) => s.values.type}>
-                    {(type) =>
-                      type === "PRIVATE" ? (
-                        <createForm.Field name="rankingMode">
-                          {(field) => (
-                            <Field>
-                              <FieldLabel>Ranking Mode</FieldLabel>
-                              <Select
-                                value={field.state.value}
-                                onValueChange={(v) =>
-                                  field.handleChange(v as RankingMode)
-                                }
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select mode">
-                                    {(value) =>
-                                      value === "OVERALL"
-                                        ? "Overall"
-                                        : value === "HEAD_TO_HEAD"
-                                          ? "Head to Head"
-                                          : undefined
-                                    }
-                                  </SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="OVERALL">
-                                    Overall
-                                  </SelectItem>
-                                  <SelectItem value="HEAD_TO_HEAD">
-                                    Head to Head
-                                  </SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </Field>
-                          )}
-                        </createForm.Field>
-                      ) : (
-                        <Field>
-                          <FieldLabel>Ranking Mode</FieldLabel>
-                          <div className="flex h-9 items-center rounded-md border px-3 text-sm text-muted-foreground">
-                            Overall (fixed for public)
-                          </div>
-                        </Field>
-                      )
-                    }
-                  </createForm.Subscribe>
+                  <Field>
+                    <FieldLabel>Type</FieldLabel>
+                    <div className="flex h-9 items-center rounded-md border px-3 text-sm text-muted-foreground">
+                      Public
+                    </div>
+                  </Field>
+                  <Field>
+                    <FieldLabel>Ranking Mode</FieldLabel>
+                    <div className="flex h-9 items-center rounded-md border px-3 text-sm text-muted-foreground">
+                      Overall
+                    </div>
+                  </Field>
                 </div>
 
                 <createForm.Field
