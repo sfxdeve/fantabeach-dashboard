@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
-import { Trophy, Calendar, Medal, Clock } from "lucide-react";
+import { Trophy, Medal, Users, Calendar } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -12,28 +11,13 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { Button } from "~/components/ui/button";
 import { HttpAdminApi } from "~/lib/api/http-admin-api";
 
 const adminApi = new HttpAdminApi();
 
-const STATUS_VARIANT: Record<
-  string,
-  "default" | "secondary" | "destructive" | "outline"
-> = {
-  UPCOMING: "outline",
-  REGISTRATION_OPEN: "secondary",
-  LOCKED: "destructive",
-  ONGOING: "default",
-  COMPLETED: "outline",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  UPCOMING: "Upcoming",
-  REGISTRATION_OPEN: "Open",
-  LOCKED: "Locked",
-  ONGOING: "Ongoing",
-  COMPLETED: "Completed",
+const GENDER_LABEL: Record<string, string> = {
+  MALE: "Men",
+  FEMALE: "Women",
 };
 
 export function meta() {
@@ -41,28 +25,23 @@ export function meta() {
 }
 
 export default function OverviewPage() {
-  const { data: tournamentsData, isLoading: loadingTournaments } = useQuery({
-    queryKey: ["tournaments"],
-    queryFn: () => adminApi.getTournaments({ limit: 100 }),
-  });
-
-  const { data: championships, isLoading: loadingChampionships } = useQuery({
-    queryKey: ["championships"],
-    queryFn: () => adminApi.getChampionships(),
-  });
+  const { data: championships = [], isLoading: loadingChampionships } =
+    useQuery({
+      queryKey: ["championships"],
+      queryFn: () => adminApi.getChampionships(),
+    });
 
   const { data: leaguesData, isLoading: loadingLeagues } = useQuery({
     queryKey: ["leagues"],
-    queryFn: () => adminApi.getLeagues({ limit: 100 }),
+    queryFn: () => adminApi.getLeagues({ limit: 1 }),
   });
 
-  const tournaments = tournamentsData?.items ?? [];
-  const ongoingCount = tournaments.filter((t) => t.status === "ONGOING").length;
-  const upcomingCount = tournaments.filter(
-    (t) => t.status === "UPCOMING" || t.status === "REGISTRATION_OPEN",
-  ).length;
+  const { data: usersData, isLoading: loadingUsers } = useQuery({
+    queryKey: ["users", "overview"],
+    queryFn: () => adminApi.getUsers({ limit: 1 }),
+  });
 
-  const recentTournaments = tournaments.slice(0, 8);
+  const recentChampionships = championships.slice(0, 8);
 
   return (
     <div className="space-y-6">
@@ -71,21 +50,9 @@ export default function OverviewPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Championships"
-          value={championships?.length ?? 0}
+          value={championships.length}
           icon={Trophy}
           loading={loadingChampionships}
-        />
-        <StatCard
-          title="Ongoing Tournaments"
-          value={ongoingCount}
-          icon={Calendar}
-          loading={loadingTournaments}
-        />
-        <StatCard
-          title="Upcoming"
-          value={upcomingCount}
-          icon={Clock}
-          loading={loadingTournaments}
         />
         <StatCard
           title="Leagues"
@@ -93,64 +60,64 @@ export default function OverviewPage() {
           icon={Medal}
           loading={loadingLeagues}
         />
+        <StatCard
+          title="Users"
+          value={usersData?.meta.total ?? 0}
+          icon={Users}
+          loading={loadingUsers}
+        />
+        <StatCard
+          title="Seasons"
+          value={new Set(championships.map((c) => c.seasonYear)).size}
+          icon={Calendar}
+          loading={loadingChampionships}
+        />
       </div>
 
       <div>
-        <h2 className="mb-3 text-lg font-medium">Recent Tournaments</h2>
+        <h2 className="mb-3 text-lg font-medium">Championships</h2>
         <div className="rounded-lg border">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Location</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Start Date</TableHead>
-                <TableHead>End Date</TableHead>
-                <TableHead />
+                <TableHead>Name</TableHead>
+                <TableHead>Gender</TableHead>
+                <TableHead>Season</TableHead>
+                <TableHead>Created</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loadingTournaments ? (
+              {loadingChampionships ? (
                 Array.from({ length: 4 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 5 }).map((_, j) => (
+                    {Array.from({ length: 4 }).map((_, j) => (
                       <TableCell key={j}>
                         <Skeleton className="h-4 w-full" />
                       </TableCell>
                     ))}
                   </TableRow>
                 ))
-              ) : recentTournaments.length === 0 ? (
+              ) : recentChampionships.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={5}
+                    colSpan={4}
                     className="h-24 text-center text-muted-foreground"
                   >
-                    No tournaments yet.
+                    No championships yet.
                   </TableCell>
                 </TableRow>
               ) : (
-                recentTournaments.map((t) => (
-                  <TableRow key={t._id}>
-                    <TableCell>{t.location}</TableCell>
+                recentChampionships.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[t.status] ?? "outline"}>
-                        {STATUS_LABEL[t.status] ?? t.status}
+                      <Badge variant="outline">
+                        {GENDER_LABEL[c.gender] ?? c.gender}
                       </Badge>
                     </TableCell>
+                    <TableCell>{c.seasonYear}</TableCell>
                     <TableCell>
-                      {new Date(t.startDate).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>
-                      {new Date(t.endDate).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        render={<Link to={`/admin/tournaments/${t._id}`} />}
-                      >
-                        View
-                      </Button>
+                      {new Date(c.createdAt).toLocaleDateString()}
                     </TableCell>
                   </TableRow>
                 ))

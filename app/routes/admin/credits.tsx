@@ -91,14 +91,16 @@ function PacksTab() {
     defaultValues: {
       name: "",
       credits: "",
+      priceCents: "",
       stripePriceId: "",
     },
     onSubmit: async ({ value }) => {
       await createMutation.mutateAsync({
         name: value.name,
         credits: Number(value.credits),
+        priceCents: Number(value.priceCents),
         stripePriceId: value.stripePriceId,
-        active: true,
+        isActive: true,
       });
     },
   });
@@ -160,40 +162,79 @@ function PacksTab() {
                   )}
                 </form.Field>
 
-                <form.Field
-                  name="credits"
-                  validators={{
-                    onChange: ({ value }) =>
-                      !value || Number(value) < 1
-                        ? "Credits must be ≥ 1"
-                        : undefined,
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel htmlFor={field.name}>Credits</FieldLabel>
-                      <Input
-                        id={field.name}
-                        type="number"
-                        min={1}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        placeholder="100"
-                      />
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </form.Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <form.Field
+                    name="credits"
+                    validators={{
+                      onChange: ({ value }) =>
+                        !value || Number(value) < 1
+                          ? "Credits must be ≥ 1"
+                          : undefined,
+                    }}
+                  >
+                    {(field) => (
+                      <Field
+                        data-invalid={
+                          field.state.meta.isTouched &&
+                          field.state.meta.errors.length > 0
+                        }
+                      >
+                        <FieldLabel htmlFor={field.name}>Credits</FieldLabel>
+                        <Input
+                          id={field.name}
+                          type="number"
+                          min={1}
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChange={(e) => field.handleChange(e.target.value)}
+                          placeholder="100"
+                        />
+                        <FieldError
+                          errors={field.state.meta.errors.map((e) => ({
+                            message: String(e),
+                          }))}
+                        />
+                      </Field>
+                    )}
+                  </form.Field>
+
+                  <form.Field
+                    name="priceCents"
+                    validators={{
+                      onChange: ({ value }) =>
+                        !value || Number(value) < 0
+                          ? "Price must be ≥ 0"
+                          : undefined,
+                    }}
+                  >
+                    {(field) => (
+                      <Field
+                        data-invalid={
+                          field.state.meta.isTouched &&
+                          field.state.meta.errors.length > 0
+                        }
+                      >
+                        <FieldLabel htmlFor={field.name}>
+                          Price (cents)
+                        </FieldLabel>
+                        <Input
+                          id={field.name}
+                          type="number"
+                          min={0}
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChange={(e) => field.handleChange(e.target.value)}
+                          placeholder="499"
+                        />
+                        <FieldError
+                          errors={field.state.meta.errors.map((e) => ({
+                            message: String(e),
+                          }))}
+                        />
+                      </Field>
+                    )}
+                  </form.Field>
+                </div>
 
                 <form.Field
                   name="stripePriceId"
@@ -256,6 +297,7 @@ function PacksTab() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Credits</TableHead>
+              <TableHead>Price</TableHead>
               <TableHead>Stripe Price ID</TableHead>
               <TableHead>Status</TableHead>
               <TableHead />
@@ -265,7 +307,7 @@ function PacksTab() {
             {isLoading ? (
               Array.from({ length: 3 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 5 }).map((_, j) => (
+                  {Array.from({ length: 6 }).map((_, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -275,7 +317,7 @@ function PacksTab() {
             ) : packs.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="h-24 text-center text-muted-foreground"
                 >
                   No credit packs yet.
@@ -283,25 +325,31 @@ function PacksTab() {
               </TableRow>
             ) : (
               packs.map((pack) => (
-                <TableRow key={pack._id}>
+                <TableRow key={pack.id}>
                   <TableCell className="font-medium">{pack.name}</TableCell>
                   <TableCell>{pack.credits}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {(pack.priceCents / 100).toLocaleString("en", {
+                      style: "currency",
+                      currency: "EUR",
+                    })}
+                  </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {pack.stripePriceId}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={pack.active ? "default" : "outline"}>
-                      {pack.active ? "Active" : "Inactive"}
+                    <Badge variant={pack.isActive ? "default" : "outline"}>
+                      {pack.isActive ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => toggleMutation.mutate(pack._id)}
+                      onClick={() => toggleMutation.mutate(pack.id)}
                       disabled={toggleMutation.isPending}
                     >
-                      {pack.active ? "Deactivate" : "Activate"}
+                      {pack.isActive ? "Deactivate" : "Activate"}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -343,7 +391,7 @@ function TransactionsTab() {
               <TableHead>Type</TableHead>
               <TableHead>Source</TableHead>
               <TableHead>Amount</TableHead>
-              <TableHead>Balance After</TableHead>
+              <TableHead>New Balance</TableHead>
               <TableHead>Wallet</TableHead>
               <TableHead>Date</TableHead>
             </TableRow>
@@ -370,7 +418,7 @@ function TransactionsTab() {
               </TableRow>
             ) : (
               transactions.map((tx) => (
-                <TableRow key={tx._id}>
+                <TableRow key={tx.id}>
                   <TableCell>
                     <Badge variant={TX_TYPE_VARIANT[tx.type]}>
                       {TX_TYPE_LABEL[tx.type]}
@@ -391,7 +439,7 @@ function TransactionsTab() {
                       {tx.amount}
                     </span>
                   </TableCell>
-                  <TableCell>{tx.balanceAfter}</TableCell>
+                  <TableCell>{tx.newBalance}</TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {tx.walletId.slice(-8)}
                   </TableCell>
@@ -492,7 +540,7 @@ function GrantCreditsTab() {
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(e) => field.handleChange(e.target.value)}
-                  placeholder="MongoDB ObjectId"
+                  placeholder="User UUID"
                 />
                 <FieldError
                   errors={field.state.meta.errors.map((e) => ({

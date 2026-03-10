@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams, Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
@@ -6,15 +6,14 @@ import { toast } from "sonner";
 import {
   ArrowLeftIcon,
   PlusIcon,
-  Trash2Icon,
   PencilIcon,
-  LockIcon,
+  ClockIcon,
+  UploadIcon,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
 import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
-import { Checkbox } from "~/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -37,7 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import {
   Field,
   FieldError,
@@ -48,12 +46,10 @@ import { DateTimePickerField } from "~/components/ui/date-picker";
 import { HttpAdminApi } from "~/lib/api/http-admin-api";
 import type {
   Athlete,
-  EntryStatus,
   Match,
   MatchRound,
+  MatchSide,
   MatchStatus,
-  Tournament,
-  TournamentPair,
   TournamentStatus,
 } from "~/lib/api/types";
 
@@ -96,386 +92,96 @@ const MATCH_ROUND_LABEL: Record<MatchRound, string> = {
   THIRD_PLACE: "3rd Place",
 };
 
-const ENTRY_STATUS_LABEL: Record<EntryStatus, string> = {
-  DIRECT: "Direct",
-  QUALIFICATION: "Qualification",
-  RESERVE_1: "Reserve 1",
-  RESERVE_2: "Reserve 2",
-  RESERVE_3: "Reserve 3",
-};
+const MATCH_ROUNDS: MatchRound[] = [
+  "QUALIFICATION_R1",
+  "QUALIFICATION_R2",
+  "POOL",
+  "R12",
+  "QF",
+  "SF",
+  "FINAL",
+  "THIRD_PLACE",
+];
 
-function athleteName(a: string | Athlete): string {
-  if (typeof a === "object") return `${a.firstName} ${a.lastName}`;
-  return a;
+function athleteName(id: string, athletes: Athlete[]): string {
+  const a = athletes.find((x) => x.id === id);
+  return a ? `${a.firstName} ${a.lastName}` : id;
 }
 
-function pairLabel(pair: TournamentPair): string {
-  return `${athleteName(pair.athleteAId)} / ${athleteName(pair.athleteBId)}`;
+function formatScore(match: Match): string {
+  const sets: string[] = [];
+  if (match.set1A != null && match.set1B != null)
+    sets.push(`${match.set1A}:${match.set1B}`);
+  if (match.set2A != null && match.set2B != null)
+    sets.push(`${match.set2A}:${match.set2B}`);
+  if (match.set3A != null && match.set3B != null)
+    sets.push(`${match.set3A}:${match.set3B}`);
+  return sets.length > 0 ? sets.join(" ") : "—";
 }
 
-function getChampionshipId(t: Tournament): string {
-  if (typeof t.championshipId === "object") return t.championshipId._id;
-  return t.championshipId;
-}
+// ── Athlete Selector Field ─────────────────────────────────────────────────
 
-// ── Pairs Tab ─────────────────────────────────────────────────────────────
-
-function PairsTab({
-  tournamentId,
-  championshipId,
+function AthleteSelect({
+  value,
+  onChange,
+  athletes,
+  placeholder,
 }: {
-  tournamentId: string;
-  championshipId: string;
+  value: string;
+  onChange: (v: string) => void;
+  athletes: Athlete[];
+  placeholder: string;
 }) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-
-  const { data: pairs = [], isLoading } = useQuery({
-    queryKey: ["pairs", tournamentId],
-    queryFn: () => adminApi.getTournamentPairs(tournamentId),
-  });
-
-  const { data: athletesData } = useQuery({
-    queryKey: ["athletes", { championshipId, limit: 200 }],
-    queryFn: () => adminApi.getAthletes({ championshipId, limit: 200 }),
-    enabled: !!championshipId,
-  });
-  const athletes = athletesData?.items ?? [];
-
-  const removeMutation = useMutation({
-    mutationFn: (pairId: string) => adminApi.removePair(tournamentId, pairId),
-    onSuccess: () => {
-      toast.success("Pair removed");
-      void queryClient.invalidateQueries({ queryKey: ["pairs", tournamentId] });
-    },
-    onError: (e) =>
-      toast.error(e instanceof Error ? e.message : "Remove failed"),
-  });
-
-  const addMutation = useMutation({
-    mutationFn: (input: {
-      athleteAId: string;
-      athleteBId: string;
-      entryStatus: EntryStatus;
-      seedRank?: number;
-    }) => adminApi.addPair(tournamentId, input),
-    onSuccess: () => {
-      toast.success("Pair added");
-      void queryClient.invalidateQueries({ queryKey: ["pairs", tournamentId] });
-      setOpen(false);
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Add failed"),
-  });
-
-  const form = useForm({
-    defaultValues: {
-      athleteAId: "",
-      athleteBId: "",
-      entryStatus: "DIRECT" as EntryStatus,
-      seedRank: "",
-    },
-    onSubmit: async ({ value }) => {
-      await addMutation.mutateAsync({
-        athleteAId: value.athleteAId,
-        athleteBId: value.athleteBId,
-        entryStatus: value.entryStatus,
-        seedRank: value.seedRank ? Number(value.seedRank) : undefined,
-      });
-    },
-  });
-
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            setOpen(o);
-            if (!o) form.reset();
+    <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
+      <SelectTrigger>
+        <SelectValue placeholder={placeholder}>
+          {(v) => {
+            if (!v) return undefined;
+            const a = athletes.find((x) => x.id === String(v));
+            return a ? `${a.firstName} ${a.lastName}` : placeholder;
           }}
-        >
-          <Button size="sm" onClick={() => setOpen(true)}>
-            <PlusIcon className="size-4" />
-            Add Pair
-          </Button>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Add Pair</DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void form.handleSubmit();
-              }}
-              className="space-y-4"
-            >
-              <FieldGroup>
-                <form.Field
-                  name="athleteAId"
-                  validators={{
-                    onChange: ({ value }) => (!value ? "Required" : undefined),
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel>Athlete A</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v ?? "")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select athlete">
-                            {(value) => {
-                              if (value == null || value === "")
-                                return undefined;
-                              const a = athletes.find(
-                                (x) => x._id === String(value),
-                              );
-                              return a
-                                ? `${a.firstName} ${a.lastName}`
-                                : "Select athlete";
-                            }}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {athletes.map((a) => (
-                            <SelectItem key={a._id} value={a._id}>
-                              {a.firstName} {a.lastName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-
-                <form.Field
-                  name="athleteBId"
-                  validators={{
-                    onChange: ({ value }) => (!value ? "Required" : undefined),
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel>Athlete B</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v ?? "")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select athlete">
-                            {(value) => {
-                              if (value == null || value === "")
-                                return undefined;
-                              const a = athletes.find(
-                                (x) => x._id === String(value),
-                              );
-                              return a
-                                ? `${a.firstName} ${a.lastName}`
-                                : "Select athlete";
-                            }}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {athletes.map((a) => (
-                            <SelectItem key={a._id} value={a._id}>
-                              {a.firstName} {a.lastName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-
-                <form.Field name="entryStatus">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel>Entry Status</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) =>
-                          field.handleChange(v as EntryStatus)
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select entry status">
-                            {(value) =>
-                              value != null && value !== ""
-                                ? (ENTRY_STATUS_LABEL[value as EntryStatus] ??
-                                  value)
-                                : undefined
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(ENTRY_STATUS_LABEL).map(
-                            ([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  )}
-                </form.Field>
-
-                <form.Field name="seedRank">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel htmlFor={field.name}>
-                        Seed Rank (optional)
-                      </FieldLabel>
-                      <Input
-                        id={field.name}
-                        type="number"
-                        min={1}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        placeholder="e.g. 1"
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-              </FieldGroup>
-
-              <DialogFooter>
-                <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>
-                  {([canSubmit, isSubmitting]) => (
-                    <Button
-                      type="submit"
-                      disabled={
-                        !canSubmit || isSubmitting || addMutation.isPending
-                      }
-                    >
-                      {isSubmitting || addMutation.isPending
-                        ? "Adding…"
-                        : "Add Pair"}
-                    </Button>
-                  )}
-                </form.Subscribe>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      <div className="rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Pair</TableHead>
-              <TableHead>Entry</TableHead>
-              <TableHead>Seed</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 4 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <Skeleton className="h-4 w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : pairs.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={4}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No pairs yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              pairs.map((pair) => (
-                <TableRow key={pair._id}>
-                  <TableCell className="font-medium">
-                    {pairLabel(pair)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">
-                      {ENTRY_STATUS_LABEL[pair.entryStatus]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{pair.seedRank ?? "—"}</TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeMutation.mutate(pair._id)}
-                      disabled={removeMutation.isPending}
-                    >
-                      <Trash2Icon className="size-4 text-destructive" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {athletes.map((a) => (
+          <SelectItem key={a.id} value={a.id}>
+            {a.firstName} {a.lastName}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 
-// ── Match Edit Dialog ─────────────────────────────────────────────────────
+// ── Result Dialog ──────────────────────────────────────────────────────────
 
-function MatchEditDialog({
+function ResultDialog({
   match,
-  pairs,
+  athletes,
   onClose,
 }: {
   match: Match;
-  pairs: TournamentPair[];
+  athletes: Athlete[];
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
 
-  const updateMutation = useMutation({
-    mutationFn: (input: Parameters<typeof adminApi.updateMatch>[1]) =>
-      adminApi.updateMatch(match._id, input),
+  const resultMutation = useMutation({
+    mutationFn: (input: Parameters<typeof adminApi.enterMatchResult>[1]) =>
+      adminApi.enterMatchResult(match.id, input),
     onSuccess: () => {
-      toast.success("Match updated");
+      toast.success("Result saved");
       void queryClient.invalidateQueries({
         queryKey: ["matches", match.tournamentId],
       });
       onClose();
     },
-    onError: (e) =>
-      toast.error(e instanceof Error ? e.message : "Update failed"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Save failed"),
   });
 
-  const pairAId =
-    typeof match.pairAId === "object" ? match.pairAId._id : match.pairAId;
-  const pairBId =
-    typeof match.pairBId === "object" ? match.pairBId._id : match.pairBId;
+  const sideA = `${athleteName(match.sideAAthlete1Id, athletes)} / ${athleteName(match.sideAAthlete2Id, athletes)}`;
+  const sideB = `${athleteName(match.sideBAthlete1Id, athletes)} / ${athleteName(match.sideBAthlete2Id, athletes)}`;
 
   const form = useForm({
     defaultValues: {
@@ -485,28 +191,253 @@ function MatchEditDialog({
       set2B: match.set2B != null ? String(match.set2B) : "",
       set3A: match.set3A != null ? String(match.set3A) : "",
       set3B: match.set3B != null ? String(match.set3B) : "",
-      winnerPairId: match.winnerPairId ?? "",
-      status: match.status,
-      isRetirement: match.isRetirement,
+      winnerSide: (match.winnerSide ?? "") as MatchSide | "",
     },
     onSubmit: async ({ value }) => {
       const toNum = (v: string) => (v.trim() !== "" ? Number(v) : undefined);
-      await updateMutation.mutateAsync({
-        set1A: toNum(value.set1A),
-        set1B: toNum(value.set1B),
-        set2A: toNum(value.set2A),
-        set2B: toNum(value.set2B),
-        set3A: toNum(value.set3A),
-        set3B: toNum(value.set3B),
-        winnerPairId: value.winnerPairId || undefined,
-        status: value.status,
-        isRetirement: value.isRetirement,
+      const set3A = toNum(value.set3A);
+      const set3B = toNum(value.set3B);
+      await resultMutation.mutateAsync({
+        set1A: Number(value.set1A),
+        set1B: Number(value.set1B),
+        set2A: Number(value.set2A),
+        set2B: Number(value.set2B),
+        ...(set3A !== undefined && set3B !== undefined ? { set3A, set3B } : {}),
+        winnerSide: value.winnerSide as MatchSide,
       });
     },
   });
 
-  const pairAObj = pairs.find((p) => p._id === pairAId);
-  const pairBObj = pairs.find((p) => p._id === pairBId);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        void form.handleSubmit();
+      }}
+      className="space-y-4"
+    >
+      <div className="text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">Side A:</span> {sideA}
+        <br />
+        <span className="font-medium text-foreground">Side B:</span> {sideB}
+      </div>
+
+      <FieldGroup>
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Set Scores (A : B)</p>
+          {(["1", "2", "3"] as const).map((set) => (
+            <div key={set} className="flex items-center gap-2">
+              <span className="w-12 text-sm text-muted-foreground">
+                Set {set}
+                {set === "3" ? " (opt)" : ""}
+              </span>
+              <form.Field name={`set${set}A` as "set1A" | "set2A" | "set3A"}>
+                {(field) => (
+                  <Input
+                    type="number"
+                    min={0}
+                    className="w-20 text-center"
+                    placeholder="A"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                  />
+                )}
+              </form.Field>
+              <span className="text-muted-foreground">:</span>
+              <form.Field name={`set${set}B` as "set1B" | "set2B" | "set3B"}>
+                {(field) => (
+                  <Input
+                    type="number"
+                    min={0}
+                    className="w-20 text-center"
+                    placeholder="B"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(e) => field.handleChange(e.target.value)}
+                  />
+                )}
+              </form.Field>
+            </div>
+          ))}
+        </div>
+
+        <form.Field
+          name="winnerSide"
+          validators={{
+            onChange: ({ value }) =>
+              !value ? "Winner is required" : undefined,
+          }}
+        >
+          {(field) => (
+            <Field
+              data-invalid={
+                field.state.meta.isTouched && field.state.meta.errors.length > 0
+              }
+            >
+              <FieldLabel>Winner</FieldLabel>
+              <Select
+                value={field.state.value}
+                onValueChange={(v) =>
+                  field.handleChange((v ?? "") as MatchSide | "")
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select winner">
+                    {(v) => {
+                      if (v === "A") return `Side A: ${sideA}`;
+                      if (v === "B") return `Side B: ${sideB}`;
+                      return undefined;
+                    }}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="A">Side A: {sideA}</SelectItem>
+                  <SelectItem value="B">Side B: {sideB}</SelectItem>
+                </SelectContent>
+              </Select>
+              <FieldError
+                errors={field.state.meta.errors.map((e) => ({
+                  message: String(e),
+                }))}
+              />
+            </Field>
+          )}
+        </form.Field>
+      </FieldGroup>
+
+      <DialogFooter>
+        <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>
+          {([canSubmit, isSubmitting]) => (
+            <Button
+              type="submit"
+              disabled={!canSubmit || isSubmitting || resultMutation.isPending}
+            >
+              {isSubmitting || resultMutation.isPending
+                ? "Saving…"
+                : "Save Result"}
+            </Button>
+          )}
+        </form.Subscribe>
+      </DialogFooter>
+    </form>
+  );
+}
+
+// ── Match Form (Create / Edit) ─────────────────────────────────────────────
+
+function MatchForm({
+  tournamentId,
+  athletes,
+  match,
+  onClose,
+}: {
+  tournamentId: string;
+  athletes: Athlete[];
+  match?: Match;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const createMutation = useMutation({
+    mutationFn: (input: Parameters<typeof adminApi.createMatch>[0]) =>
+      adminApi.createMatch(input),
+    onSuccess: () => {
+      toast.success("Match created");
+      void queryClient.invalidateQueries({
+        queryKey: ["matches", tournamentId],
+      });
+      onClose();
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Create failed"),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (input: Parameters<typeof adminApi.updateMatch>[1]) =>
+      adminApi.updateMatch(match!.id, input),
+    onSuccess: () => {
+      toast.success("Match updated");
+      void queryClient.invalidateQueries({
+        queryKey: ["matches", tournamentId],
+      });
+      onClose();
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Update failed"),
+  });
+
+  const form = useForm({
+    defaultValues: {
+      round: (match?.round ?? "POOL") as MatchRound,
+      scheduledAt: match?.scheduledAt ? match.scheduledAt.slice(0, 16) : "",
+      sideAAthlete1Id: match?.sideAAthlete1Id ?? "",
+      sideAAthlete2Id: match?.sideAAthlete2Id ?? "",
+      sideBAthlete1Id: match?.sideBAthlete1Id ?? "",
+      sideBAthlete2Id: match?.sideBAthlete2Id ?? "",
+    },
+    onSubmit: async ({ value }) => {
+      if (match) {
+        await updateMutation.mutateAsync({
+          round: value.round,
+          scheduledAt: value.scheduledAt || undefined,
+          sideAAthlete1Id: value.sideAAthlete1Id || undefined,
+          sideAAthlete2Id: value.sideAAthlete2Id || undefined,
+          sideBAthlete1Id: value.sideBAthlete1Id || undefined,
+          sideBAthlete2Id: value.sideBAthlete2Id || undefined,
+        });
+      } else {
+        await createMutation.mutateAsync({
+          tournamentId,
+          round: value.round,
+          scheduledAt: value.scheduledAt,
+          sideAAthlete1Id: value.sideAAthlete1Id,
+          sideAAthlete2Id: value.sideAAthlete2Id,
+          sideBAthlete1Id: value.sideBAthlete1Id,
+          sideBAthlete2Id: value.sideBAthlete2Id,
+        });
+      }
+    },
+  });
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
+  const athleteField = (
+    name:
+      | "sideAAthlete1Id"
+      | "sideAAthlete2Id"
+      | "sideBAthlete1Id"
+      | "sideBAthlete2Id",
+    label: string,
+  ) => (
+    <form.Field
+      name={name}
+      validators={{
+        onChange: ({ value }) => (!value ? "Required" : undefined),
+      }}
+    >
+      {(field) => (
+        <Field
+          data-invalid={
+            field.state.meta.isTouched && field.state.meta.errors.length > 0
+          }
+        >
+          <FieldLabel>{label}</FieldLabel>
+          <AthleteSelect
+            value={field.state.value}
+            onChange={field.handleChange}
+            athletes={athletes}
+            placeholder={`Select ${label}`}
+          />
+          <FieldError
+            errors={field.state.meta.errors.map((e) => ({
+              message: String(e),
+            }))}
+          />
+        </Field>
+      )}
+    </form.Field>
+  );
 
   return (
     <form
@@ -517,113 +448,25 @@ function MatchEditDialog({
       className="space-y-4"
     >
       <FieldGroup>
-        {/* Scores */}
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Scores</p>
-          <div className="grid grid-cols-3 gap-2">
-            {(["1", "2", "3"] as const).map((set) => (
-              <div key={set} className="space-y-1">
-                <p className="text-xs text-muted-foreground text-center">
-                  Set {set}
-                </p>
-                <div className="flex gap-1">
-                  <form.Field
-                    name={`set${set}A` as "set1A" | "set2A" | "set3A"}
-                  >
-                    {(field) => (
-                      <Input
-                        type="number"
-                        min={0}
-                        className="text-center"
-                        placeholder="A"
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                      />
-                    )}
-                  </form.Field>
-                  <Input disabled value=":" className="w-6 px-0 text-center" />
-                  <form.Field
-                    name={`set${set}B` as "set1B" | "set2B" | "set3B"}
-                  >
-                    {(field) => (
-                      <Input
-                        type="number"
-                        min={0}
-                        className="text-center"
-                        placeholder="B"
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                      />
-                    )}
-                  </form.Field>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <form.Field name="winnerPairId">
+        <form.Field name="round">
           {(field) => (
             <Field>
-              <FieldLabel>Winner</FieldLabel>
+              <FieldLabel>Round</FieldLabel>
               <Select
                 value={field.state.value}
-                onValueChange={(v) => field.handleChange(v ?? "")}
+                onValueChange={(v) => field.handleChange(v as MatchRound)}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select winner">
-                    {(value) => {
-                      if (value == null || value === "") return undefined;
-                      if (value === pairAId && pairAObj)
-                        return `A: ${pairLabel(pairAObj)}`;
-                      if (value === pairBId && pairBObj)
-                        return `B: ${pairLabel(pairBObj)}`;
-                      return "Select winner";
-                    }}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {pairAObj && (
-                    <SelectItem value={pairAId}>
-                      A: {pairLabel(pairAObj)}
-                    </SelectItem>
-                  )}
-                  {pairBObj && (
-                    <SelectItem value={pairBId}>
-                      B: {pairLabel(pairBObj)}
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            </Field>
-          )}
-        </form.Field>
-
-        <form.Field name="status">
-          {(field) => (
-            <Field>
-              <FieldLabel>Status</FieldLabel>
-              <Select
-                value={field.state.value}
-                onValueChange={(v) =>
-                  field.handleChange((v ?? "SCHEDULED") as MatchStatus)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select status">
-                    {(value) =>
-                      value != null && value !== ""
-                        ? (MATCH_STATUS_LABEL[value as MatchStatus] ?? value)
-                        : undefined
+                  <SelectValue placeholder="Select round">
+                    {(v) =>
+                      v ? MATCH_ROUND_LABEL[v as MatchRound] : undefined
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(MATCH_STATUS_LABEL).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
+                  {MATCH_ROUNDS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {MATCH_ROUND_LABEL[r]}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -632,25 +475,50 @@ function MatchEditDialog({
           )}
         </form.Field>
 
-        <form.Field name="isRetirement">
+        <form.Field
+          name="scheduledAt"
+          validators={{
+            onChange: ({ value }) =>
+              !match && !value ? "Required" : undefined,
+          }}
+        >
           {(field) => (
-            <div className="flex items-center gap-2">
-              <Checkbox
-                checked={field.state.value}
-                onCheckedChange={(checked) =>
-                  field.handleChange(checked === true)
-                }
-                id="isRetirement"
+            <Field
+              data-invalid={
+                field.state.meta.isTouched && field.state.meta.errors.length > 0
+              }
+            >
+              <FieldLabel>Scheduled At{match ? " (optional)" : ""}</FieldLabel>
+              <DateTimePickerField
+                value={field.state.value}
+                onChange={field.handleChange}
+                onBlur={field.handleBlur}
+                placeholder="Pick date and time"
               />
-              <label
-                htmlFor="isRetirement"
-                className="text-sm font-medium cursor-pointer"
-              >
-                Retirement / walkover
-              </label>
-            </div>
+              <FieldError
+                errors={field.state.meta.errors.map((e) => ({
+                  message: String(e),
+                }))}
+              />
+            </Field>
           )}
         </form.Field>
+
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">Side A</p>
+          <div className="grid grid-cols-2 gap-3">
+            {athleteField("sideAAthlete1Id", "Athlete 1")}
+            {athleteField("sideAAthlete2Id", "Athlete 2")}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-muted-foreground">Side B</p>
+          <div className="grid grid-cols-2 gap-3">
+            {athleteField("sideBAthlete1Id", "Athlete 1")}
+            {athleteField("sideBAthlete2Id", "Athlete 2")}
+          </div>
+        </div>
       </FieldGroup>
 
       <DialogFooter>
@@ -658,380 +526,18 @@ function MatchEditDialog({
           {([canSubmit, isSubmitting]) => (
             <Button
               type="submit"
-              disabled={!canSubmit || isSubmitting || updateMutation.isPending}
+              disabled={!canSubmit || isSubmitting || isPending}
             >
-              {isSubmitting || updateMutation.isPending ? "Saving…" : "Save"}
+              {isSubmitting || isPending
+                ? "Saving…"
+                : match
+                  ? "Save changes"
+                  : "Create"}
             </Button>
           )}
         </form.Subscribe>
       </DialogFooter>
     </form>
-  );
-}
-
-// ── Matches Tab ────────────────────────────────────────────────────────────
-
-function MatchesTab({
-  tournamentId,
-  pairs,
-}: {
-  tournamentId: string;
-  pairs: TournamentPair[];
-}) {
-  const queryClient = useQueryClient();
-  const [editMatch, setEditMatch] = useState<Match | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-
-  const { data: matches = [], isLoading } = useQuery({
-    queryKey: ["matches", tournamentId],
-    queryFn: () => adminApi.getMatches({ tournamentId }),
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (input: {
-      round: MatchRound;
-      pairAId: string;
-      pairBId: string;
-      scheduledAt?: string;
-    }) =>
-      adminApi.createMatch({
-        tournamentId,
-        ...input,
-      }),
-    onSuccess: () => {
-      toast.success("Match created");
-      void queryClient.invalidateQueries({
-        queryKey: ["matches", tournamentId],
-      });
-      setCreateOpen(false);
-    },
-    onError: (e) =>
-      toast.error(e instanceof Error ? e.message : "Create failed"),
-  });
-
-  const createForm = useForm({
-    defaultValues: {
-      round: "POOL" as MatchRound,
-      pairAId: pairs[0]?._id ?? "",
-      pairBId: pairs[1]?._id ?? "",
-      scheduledAt: "",
-    },
-    onSubmit: async ({ value }) => {
-      await createMutation.mutateAsync({
-        round: value.round,
-        pairAId: value.pairAId,
-        pairBId: value.pairBId,
-        scheduledAt: value.scheduledAt || undefined,
-      });
-    },
-  });
-
-  function formatScore(match: Match): string {
-    const sets: string[] = [];
-    if (match.set1A != null && match.set1B != null)
-      sets.push(`${match.set1A}:${match.set1B}`);
-    if (match.set2A != null && match.set2B != null)
-      sets.push(`${match.set2A}:${match.set2B}`);
-    if (match.set3A != null && match.set3B != null)
-      sets.push(`${match.set3A}:${match.set3B}`);
-    return sets.length > 0 ? sets.join(" ") : "—";
-  }
-
-  function matchPairName(id: string | TournamentPair): string {
-    if (typeof id === "object") return pairLabel(id);
-    const found = pairs.find((p) => p._id === id);
-    return found ? pairLabel(found) : id;
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Dialog
-          open={createOpen}
-          onOpenChange={(o) => {
-            setCreateOpen(o);
-            if (!o) createForm.reset();
-          }}
-        >
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <PlusIcon className="size-4" />
-            New Match
-          </Button>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>New Match</DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void createForm.handleSubmit();
-              }}
-              className="space-y-4"
-            >
-              <FieldGroup>
-                <createForm.Field name="round">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel>Round</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) =>
-                          field.handleChange(v as MatchRound)
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select round">
-                            {(value) =>
-                              value != null && value !== ""
-                                ? (MATCH_ROUND_LABEL[value as MatchRound] ??
-                                  value)
-                                : undefined
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(MATCH_ROUND_LABEL).map(
-                            ([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  )}
-                </createForm.Field>
-
-                <createForm.Field
-                  name="pairAId"
-                  validators={{
-                    onChange: ({ value }) => (!value ? "Required" : undefined),
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel>Pair A</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v ?? "")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select pair">
-                            {(value) => {
-                              if (value == null || value === "")
-                                return undefined;
-                              const p = pairs.find(
-                                (x) => x._id === String(value),
-                              );
-                              return p ? pairLabel(p) : "Select pair";
-                            }}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {pairs.map((p) => (
-                            <SelectItem key={p._id} value={p._id}>
-                              {pairLabel(p)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </createForm.Field>
-
-                <createForm.Field
-                  name="pairBId"
-                  validators={{
-                    onChange: ({ value }) => (!value ? "Required" : undefined),
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel>Pair B</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v ?? "")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select pair">
-                            {(value) => {
-                              if (value == null || value === "")
-                                return undefined;
-                              const p = pairs.find(
-                                (x) => x._id === String(value),
-                              );
-                              return p ? pairLabel(p) : "Select pair";
-                            }}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {pairs.map((p) => (
-                            <SelectItem key={p._id} value={p._id}>
-                              {pairLabel(p)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </createForm.Field>
-
-                <createForm.Field name="scheduledAt">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel>Scheduled At (optional)</FieldLabel>
-                      <DateTimePickerField
-                        value={field.state.value}
-                        onChange={field.handleChange}
-                        onBlur={field.handleBlur}
-                        placeholder="Pick scheduled date and time"
-                      />
-                    </Field>
-                  )}
-                </createForm.Field>
-              </FieldGroup>
-
-              <DialogFooter>
-                <createForm.Subscribe
-                  selector={(s) => [s.canSubmit, s.isSubmitting]}
-                >
-                  {([canSubmit, isSubmitting]) => (
-                    <Button
-                      type="submit"
-                      disabled={
-                        !canSubmit || isSubmitting || createMutation.isPending
-                      }
-                    >
-                      {isSubmitting || createMutation.isPending
-                        ? "Creating…"
-                        : "Create"}
-                    </Button>
-                  )}
-                </createForm.Subscribe>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      <div className="rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Round</TableHead>
-              <TableHead>Pair A</TableHead>
-              <TableHead>Pair B</TableHead>
-              <TableHead>Score</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              Array.from({ length: 4 }).map((_, i) => (
-                <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((_, j) => (
-                    <TableCell key={j}>
-                      <Skeleton className="h-4 w-full" />
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : matches.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No matches yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              matches.map((match) => (
-                <TableRow key={match._id}>
-                  <TableCell>{MATCH_ROUND_LABEL[match.round]}</TableCell>
-                  <TableCell className="text-sm">
-                    {matchPairName(match.pairAId)}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {matchPairName(match.pairBId)}
-                  </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {formatScore(match)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        match.status === "COMPLETED" ||
-                        match.status === "CORRECTED"
-                          ? "default"
-                          : match.status === "IN_PROGRESS"
-                            ? "secondary"
-                            : "outline"
-                      }
-                    >
-                      {MATCH_STATUS_LABEL[match.status]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditMatch(match)}
-                    >
-                      <PencilIcon className="size-4" />
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {/* Edit match dialog */}
-      <Dialog
-        open={!!editMatch}
-        onOpenChange={(o) => {
-          if (!o) setEditMatch(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Match</DialogTitle>
-          </DialogHeader>
-          {editMatch && (
-            <MatchEditDialog
-              match={editMatch}
-              pairs={pairs}
-              onClose={() => setEditMatch(null)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
   );
 }
 
@@ -1044,6 +550,12 @@ export function meta() {
 export default function TournamentDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editMatch, setEditMatch] = useState<Match | null>(null);
+  const [resultMatch, setResultMatch] = useState<Match | null>(null);
+  const [lockOpen, setLockOpen] = useState(false);
+  const [lockTime, setLockTime] = useState("");
+  const importRef = useRef<HTMLInputElement>(null);
 
   const { data: tournament, isLoading: tournamentLoading } = useQuery({
     queryKey: ["tournament", id],
@@ -1051,27 +563,62 @@ export default function TournamentDetailPage() {
     enabled: !!id,
   });
 
-  const { data: pairs = [] } = useQuery({
-    queryKey: ["pairs", id],
-    queryFn: () => adminApi.getTournamentPairs(id!),
+  const { data: matchesData, isLoading: matchesLoading } = useQuery({
+    queryKey: ["matches", id],
+    queryFn: () => adminApi.getMatchesByTournament(id!),
     enabled: !!id,
   });
 
-  const lockMutation = useMutation({
-    mutationFn: () => adminApi.lockLineups(id!),
+  const championshipId = tournament?.championshipId ?? "";
+
+  const { data: athletesData } = useQuery({
+    queryKey: ["athletes", { championshipId, limit: 500 }],
+    queryFn: () => adminApi.getAthletes({ championshipId, limit: 500 }),
+    enabled: !!championshipId,
+  });
+  const athletes = athletesData?.items ?? [];
+
+  const overrideLockMutation = useMutation({
+    mutationFn: (lineupLockAt: string) =>
+      adminApi.overrideLineupLock(id!, { lineupLockAt }),
     onSuccess: () => {
-      toast.success("Lineups locked");
+      toast.success("Lineup lock updated");
       void queryClient.invalidateQueries({ queryKey: ["tournament", id] });
+      setLockOpen(false);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Lock failed"),
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Update failed"),
   });
 
-  const championshipId = tournament ? getChampionshipId(tournament) : "";
+  const importMutation = useMutation({
+    mutationFn: (file: File) => adminApi.importMatches(file),
+    onSuccess: (result) => {
+      toast.success(
+        `Import complete: ${result.created} created, ${result.updated} updated`,
+      );
+      if (result.errors.length > 0) {
+        toast.warning(`${result.errors.length} rows had errors`);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["matches", id] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Import failed"),
+  });
+
+  const matches = matchesData?.items ?? [];
+
+  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      importMutation.mutate(file);
+    }
+    e.target.value = "";
+  }
 
   return (
     <div className="space-y-6">
-      {/* Back + header */}
-      <div className="flex items-center gap-4">
+      {/* Back */}
+      <div>
         <Button
           variant="ghost"
           size="sm"
@@ -1082,6 +629,7 @@ export default function TournamentDetailPage() {
         </Button>
       </div>
 
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           {tournamentLoading ? (
@@ -1092,9 +640,7 @@ export default function TournamentDetailPage() {
           ) : tournament ? (
             <>
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-semibold">
-                  {tournament.location}
-                </h1>
+                <h1 className="text-2xl font-semibold">Tournament</h1>
                 <Badge variant={STATUS_VARIANT[tournament.status]}>
                   {STATUS_LABEL[tournament.status]}
                 </Badge>
@@ -1112,29 +658,241 @@ export default function TournamentDetailPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => lockMutation.mutate()}
-          disabled={lockMutation.isPending}
+          onClick={() => {
+            setLockTime(tournament?.lineupLockAt?.slice(0, 16) ?? "");
+            setLockOpen(true);
+          }}
         >
-          <LockIcon className="size-4" />
-          {lockMutation.isPending ? "Locking…" : "Lock Lineups"}
+          <ClockIcon className="size-4" />
+          Override Lock Time
         </Button>
       </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="pairs">
-        <TabsList>
-          <TabsTrigger value="pairs">Pairs</TabsTrigger>
-          <TabsTrigger value="matches">Matches</TabsTrigger>
-        </TabsList>
+      {/* Lock override dialog */}
+      <Dialog
+        open={lockOpen}
+        onOpenChange={(o) => {
+          if (!o) setLockOpen(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Override Lineup Lock Time</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <DateTimePickerField
+              value={lockTime}
+              onChange={setLockTime}
+              placeholder="Pick new lock time"
+            />
+            <DialogFooter>
+              <Button
+                onClick={() => overrideLockMutation.mutate(lockTime)}
+                disabled={!lockTime || overrideLockMutation.isPending}
+              >
+                {overrideLockMutation.isPending
+                  ? "Saving…"
+                  : "Update Lock Time"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-        <TabsContent value="pairs" className="mt-4">
-          {id && <PairsTab tournamentId={id} championshipId={championshipId} />}
-        </TabsContent>
+      {/* Matches section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Matches</h2>
+          <div className="flex items-center gap-2">
+            <input
+              ref={importRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              className="hidden"
+              onChange={handleImport}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => importRef.current?.click()}
+              disabled={importMutation.isPending}
+            >
+              <UploadIcon className="size-4" />
+              {importMutation.isPending ? "Importing…" : "Import CSV"}
+            </Button>
+            <Dialog
+              open={createOpen}
+              onOpenChange={(o) => {
+                if (!o) setCreateOpen(false);
+              }}
+            >
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <PlusIcon className="size-4" />
+                New Match
+              </Button>
+              <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>New Match</DialogTitle>
+                </DialogHeader>
+                {id && (
+                  <MatchForm
+                    tournamentId={id}
+                    athletes={athletes}
+                    onClose={() => setCreateOpen(false)}
+                  />
+                )}
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
 
-        <TabsContent value="matches" className="mt-4">
-          {id && <MatchesTab tournamentId={id} pairs={pairs} />}
-        </TabsContent>
-      </Tabs>
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Round</TableHead>
+                <TableHead>Scheduled</TableHead>
+                <TableHead>Side A</TableHead>
+                <TableHead>Side B</TableHead>
+                <TableHead>Score</TableHead>
+                <TableHead>Winner</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {matchesLoading ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <TableRow key={i}>
+                    {Array.from({ length: 8 }).map((_, j) => (
+                      <TableCell key={j}>
+                        <Skeleton className="h-4 w-full" />
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : matches.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={8}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    No matches yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                matches.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell>{MATCH_ROUND_LABEL[m.round]}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                      {new Date(m.scheduledAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div>{athleteName(m.sideAAthlete1Id, athletes)}</div>
+                      <div className="text-muted-foreground">
+                        {athleteName(m.sideAAthlete2Id, athletes)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div>{athleteName(m.sideBAthlete1Id, athletes)}</div>
+                      <div className="text-muted-foreground">
+                        {athleteName(m.sideBAthlete2Id, athletes)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-sm">
+                      {formatScore(m)}
+                    </TableCell>
+                    <TableCell>
+                      {m.winnerSide ? (
+                        <Badge variant="outline">Side {m.winnerSide}</Badge>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          m.status === "COMPLETED" || m.status === "CORRECTED"
+                            ? "default"
+                            : m.status === "IN_PROGRESS"
+                              ? "secondary"
+                              : "outline"
+                        }
+                      >
+                        {MATCH_STATUS_LABEL[m.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setEditMatch(m)}
+                        >
+                          <PencilIcon className="size-4" />
+                        </Button>
+                        {(m.status === "SCHEDULED" ||
+                          m.status === "IN_PROGRESS") && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setResultMatch(m)}
+                          >
+                            <span className="text-xs font-medium">Result</span>
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+
+      {/* Edit match dialog */}
+      <Dialog
+        open={!!editMatch}
+        onOpenChange={(o) => {
+          if (!o) setEditMatch(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Match</DialogTitle>
+          </DialogHeader>
+          {editMatch && id && (
+            <MatchForm
+              tournamentId={id}
+              athletes={athletes}
+              match={editMatch}
+              onClose={() => setEditMatch(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Result dialog */}
+      <Dialog
+        open={!!resultMatch}
+        onOpenChange={(o) => {
+          if (!o) setResultMatch(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enter Result</DialogTitle>
+          </DialogHeader>
+          {resultMatch && (
+            <ResultDialog
+              match={resultMatch}
+              athletes={athletes}
+              onClose={() => setResultMatch(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

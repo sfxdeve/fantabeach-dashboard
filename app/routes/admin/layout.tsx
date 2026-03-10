@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Trophy,
   Users,
+  Users2,
   Calendar,
   Medal,
   CreditCard,
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
   { to: "/admin/tournaments", label: "Tournaments", icon: Calendar },
   { to: "/admin/leagues", label: "Leagues", icon: Medal },
   { to: "/admin/credits", label: "Credits", icon: CreditCard },
+  { to: "/admin/users", label: "Users", icon: Users2 },
   { to: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText },
 ];
 

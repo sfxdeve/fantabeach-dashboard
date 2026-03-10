@@ -1,4 +1,5 @@
-import { ApiError, httpClient } from "~/lib/api/client";
+import { httpClient } from "~/lib/api/client";
+import { ApiError } from "~/lib/api/client";
 import type {
   AuditLog,
   AuditLogFilters,
@@ -12,23 +13,28 @@ import type {
   CreateCreditPackInput,
   CreateLeagueInput,
   CreateMatchInput,
-  CreatePairInput,
   CreateTournamentInput,
   GrantCreditsInput,
   League,
   LeagueFilters,
+  LineupLockOverrideInput,
   LoginInput,
   Match,
   MatchFilters,
+  MatchResultInput,
+  ImportResult,
   PagedResult,
   Session,
   Tournament,
   TournamentFilters,
-  TournamentPair,
   UpdateAthleteInput,
   UpdateChampionshipInput,
+  UpdateLeagueInput,
   UpdateMatchInput,
   UpdateTournamentInput,
+  UpdateUserInput,
+  User,
+  UserFilters,
 } from "~/lib/api/types";
 
 function decodeJwtExpiry(token: string): string {
@@ -72,52 +78,83 @@ export class HttpAdminApi {
   // ── Championships ──────────────────────────────────────────
 
   async getChampionships(): Promise<Championship[]> {
-    const { data } = await httpClient.get<Championship[]>(
+    const { data } = await httpClient.get<PagedResult<Championship>>(
       "/api/v1/championships",
+      { params: { limit: 500 } },
     );
-    return data;
+    return data.items;
   }
 
   async createChampionship(
     input: CreateChampionshipInput,
   ): Promise<Championship> {
-    const { data } = await httpClient.post<Championship>(
+    const { data } = await httpClient.post<{ championship: Championship }>(
       "/api/v1/championships",
       input,
     );
-    return data;
+    return data.championship;
   }
 
   async updateChampionship(
     id: string,
     input: UpdateChampionshipInput,
   ): Promise<Championship> {
-    const { data } = await httpClient.patch<Championship>(
+    const { data } = await httpClient.patch<{ championship: Championship }>(
       `/api/v1/championships/${id}`,
       input,
+    );
+    return data.championship;
+  }
+
+  async importChampionships(file: File): Promise<ImportResult> {
+    const form = new FormData();
+    form.append("file", file);
+    const { data } = await httpClient.post<ImportResult>(
+      "/api/v1/championships/import",
+      form,
+      { headers: { "Content-Type": "multipart/form-data" } },
     );
     return data;
   }
 
   // ── Athletes ───────────────────────────────────────────────
 
-  async getAthletes(filters?: AthleteFilters): Promise<PagedResult<Athlete>> {
+  async getAthletes(filters: AthleteFilters): Promise<PagedResult<Athlete>> {
+    const { championshipId, ...params } = filters;
     const { data } = await httpClient.get<PagedResult<Athlete>>(
-      "/api/v1/athletes",
-      { params: filters },
+      `/api/v1/championships/${championshipId}/athletes`,
+      { params },
     );
     return data;
   }
 
   async createAthlete(input: CreateAthleteInput): Promise<Athlete> {
-    const { data } = await httpClient.post<Athlete>("/api/v1/athletes", input);
-    return data;
+    const { data } = await httpClient.post<{ athlete: Athlete }>(
+      "/api/v1/athletes",
+      input,
+    );
+    return data.athlete;
   }
 
   async updateAthlete(id: string, input: UpdateAthleteInput): Promise<Athlete> {
-    const { data } = await httpClient.patch<Athlete>(
+    const { data } = await httpClient.patch<{ athlete: Athlete }>(
       `/api/v1/athletes/${id}`,
       input,
+    );
+    return data.athlete;
+  }
+
+  async deleteAthlete(id: string): Promise<void> {
+    await httpClient.delete(`/api/v1/athletes/${id}`);
+  }
+
+  async importAthletes(file: File): Promise<ImportResult> {
+    const form = new FormData();
+    form.append("file", file);
+    const { data } = await httpClient.post<ImportResult>(
+      "/api/v1/athletes/import",
+      form,
+      { headers: { "Content-Type": "multipart/form-data" } },
     );
     return data;
   }
@@ -125,92 +162,116 @@ export class HttpAdminApi {
   // ── Tournaments ────────────────────────────────────────────
 
   async getTournaments(
-    filters?: TournamentFilters,
+    filters: TournamentFilters,
   ): Promise<PagedResult<Tournament>> {
+    const { championshipId, ...params } = filters;
     const { data } = await httpClient.get<PagedResult<Tournament>>(
-      "/api/v1/tournaments",
-      { params: filters },
+      `/api/v1/championships/${championshipId}/tournaments`,
+      { params },
     );
     return data;
   }
 
   async getTournament(id: string): Promise<Tournament> {
-    const { data } = await httpClient.get<Tournament>(
+    const { data } = await httpClient.get<{ tournament: Tournament }>(
       `/api/v1/tournaments/${id}`,
     );
-    return data;
+    return data.tournament;
   }
 
   async createTournament(input: CreateTournamentInput): Promise<Tournament> {
-    const { data } = await httpClient.post<Tournament>(
+    const { data } = await httpClient.post<{ tournament: Tournament }>(
       "/api/v1/tournaments",
       input,
     );
-    return data;
+    return data.tournament;
   }
 
   async updateTournament(
     id: string,
     input: UpdateTournamentInput,
   ): Promise<Tournament> {
-    const { data } = await httpClient.patch<Tournament>(
+    const { data } = await httpClient.patch<{ tournament: Tournament }>(
       `/api/v1/tournaments/${id}`,
       input,
     );
-    return data;
+    return data.tournament;
   }
 
-  async lockLineups(tournamentId: string): Promise<Tournament> {
-    const { data } = await httpClient.post<Tournament>(
-      `/api/v1/tournaments/${tournamentId}/lock`,
-    );
-    return data;
-  }
-
-  // ── Tournament Pairs ───────────────────────────────────────
-
-  async getTournamentPairs(tournamentId: string): Promise<TournamentPair[]> {
-    const { data } = await httpClient.get<TournamentPair[]>(
-      `/api/v1/tournaments/${tournamentId}/pairs`,
-    );
-    return data;
-  }
-
-  async addPair(
-    tournamentId: string,
-    input: CreatePairInput,
-  ): Promise<TournamentPair> {
-    const { data } = await httpClient.post<TournamentPair>(
-      `/api/v1/tournaments/${tournamentId}/pairs`,
+  async overrideLineupLock(
+    id: string,
+    input: LineupLockOverrideInput,
+  ): Promise<Tournament> {
+    const { data } = await httpClient.patch<{ tournament: Tournament }>(
+      `/api/v1/tournaments/${id}/lineup-lock`,
       input,
     );
-    return data;
+    return data.tournament;
   }
 
-  async removePair(tournamentId: string, pairId: string): Promise<void> {
-    await httpClient.delete(
-      `/api/v1/tournaments/${tournamentId}/pairs/${pairId}`,
+  async importTournaments(file: File): Promise<ImportResult> {
+    const form = new FormData();
+    form.append("file", file);
+    const { data } = await httpClient.post<ImportResult>(
+      "/api/v1/tournaments/import",
+      form,
+      { headers: { "Content-Type": "multipart/form-data" } },
     );
+    return data;
   }
 
   // ── Matches ────────────────────────────────────────────────
 
-  async getMatches(filters?: MatchFilters): Promise<Match[]> {
-    const { data } = await httpClient.get<Match[]>("/api/v1/matches", {
-      params: filters,
-    });
+  async getMatches(filters?: MatchFilters): Promise<PagedResult<Match>> {
+    const { data } = await httpClient.get<PagedResult<Match>>(
+      "/api/v1/matches",
+      {
+        params: filters,
+      },
+    );
+    return data;
+  }
+
+  async getMatchesByTournament(
+    tournamentId: string,
+  ): Promise<PagedResult<Match>> {
+    const { data } = await httpClient.get<PagedResult<Match>>(
+      `/api/v1/tournaments/${tournamentId}/matches`,
+    );
     return data;
   }
 
   async createMatch(input: CreateMatchInput): Promise<Match> {
-    const { data } = await httpClient.post<Match>("/api/v1/matches", input);
-    return data;
+    const { data } = await httpClient.post<{ match: Match }>(
+      "/api/v1/matches",
+      input,
+    );
+    return data.match;
   }
 
   async updateMatch(id: string, input: UpdateMatchInput): Promise<Match> {
-    const { data } = await httpClient.patch<Match>(
+    const { data } = await httpClient.patch<{ match: Match }>(
       `/api/v1/matches/${id}`,
       input,
+    );
+    return data.match;
+  }
+
+  async enterMatchResult(id: string, input: MatchResultInput): Promise<Match> {
+    const { data } = await httpClient.post<{ match: Match }>(
+      `/api/v1/matches/${id}/result`,
+      input,
+    );
+    return data.match;
+  }
+
+  async importMatches(file: File): Promise<ImportResult> {
+    const form = new FormData();
+    form.append("file", file);
+    const { data } = await httpClient.post<ImportResult>(
+      "/api/v1/matches/import",
+      form,
+      { headers: { "Content-Type": "multipart/form-data" } },
     );
     return data;
   }
@@ -219,39 +280,50 @@ export class HttpAdminApi {
 
   async getLeagues(filters?: LeagueFilters): Promise<PagedResult<League>> {
     const { data } = await httpClient.get<PagedResult<League>>(
-      "/api/v1/leagues",
+      "/api/v1/admin/leagues",
       { params: filters },
     );
     return data;
   }
 
   async createLeague(input: CreateLeagueInput): Promise<League> {
-    const { data } = await httpClient.post<League>("/api/v1/leagues", input);
-    return data;
+    const { data } = await httpClient.post<{ league: League }>(
+      "/api/v1/leagues",
+      input,
+    );
+    return data.league;
+  }
+
+  async updateLeague(id: string, input: UpdateLeagueInput): Promise<League> {
+    const { data } = await httpClient.patch<{ league: League }>(
+      `/api/v1/leagues/${id}`,
+      input,
+    );
+    return data.league;
   }
 
   // ── Credit Packs ───────────────────────────────────────────
 
   async getCreditPacks(): Promise<CreditPack[]> {
-    const { data } = await httpClient.get<CreditPack[]>(
-      "/api/v1/credits/packs",
+    const { data } = await httpClient.get<{ items: CreditPack[] }>(
+      "/api/v1/credits/admin/packs",
     );
-    return data;
+    return data.items;
   }
 
   async createCreditPack(input: CreateCreditPackInput): Promise<CreditPack> {
-    const { data } = await httpClient.post<CreditPack>(
+    const { data } = await httpClient.post<{ pack: CreditPack }>(
       "/api/v1/credits/admin/packs",
       input,
     );
-    return data;
+    return data.pack;
   }
 
   async toggleCreditPack(id: string): Promise<CreditPack> {
-    const { data } = await httpClient.patch<CreditPack>(
-      `/api/v1/credits/admin/packs/${id}`,
+    const { data } = await httpClient.patch<{ pack: CreditPack }>(
+      `/api/v1/credits/admin/packs/${id}/toggle`,
     );
-    return data;
+    return data.pack;
   }
 
   // ── Credit Transactions ────────────────────────────────────
@@ -261,7 +333,7 @@ export class HttpAdminApi {
     limit?: number;
   }): Promise<PagedResult<CreditTransaction>> {
     const { data } = await httpClient.get<PagedResult<CreditTransaction>>(
-      "/api/v1/credits/wallet",
+      "/api/v1/admin/transactions",
       { params },
     );
     return data;
@@ -271,13 +343,38 @@ export class HttpAdminApi {
     await httpClient.post("/api/v1/credits/admin/grant", input);
   }
 
+  // ── Users ───────────────────────────────────────────────────
+
+  async getUsers(filters?: UserFilters): Promise<PagedResult<User>> {
+    const { data } = await httpClient.get<PagedResult<User>>(
+      "/api/v1/admin/users",
+      { params: filters },
+    );
+    return data;
+  }
+
+  async getUser(id: string): Promise<User> {
+    const { data } = await httpClient.get<{ user: User }>(
+      `/api/v1/admin/users/${id}`,
+    );
+    return data.user;
+  }
+
+  async updateUser(id: string, input: UpdateUserInput): Promise<User> {
+    const { data } = await httpClient.patch<{ user: User }>(
+      `/api/v1/admin/users/${id}`,
+      input,
+    );
+    return data.user;
+  }
+
   // ── Audit Logs ─────────────────────────────────────────────
 
   async getAuditLogs(
     filters?: AuditLogFilters,
   ): Promise<PagedResult<AuditLog>> {
     const { data } = await httpClient.get<PagedResult<AuditLog>>(
-      "/api/v1/admin/audit-log",
+      "/api/v1/admin/audit-logs",
       { params: filters },
     );
     return data;

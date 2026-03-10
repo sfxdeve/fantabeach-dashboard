@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
-import { useDebouncer } from "@tanstack/react-pacer";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, SearchIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
 import { Input } from "~/components/ui/input";
@@ -24,6 +23,16 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -37,17 +46,9 @@ import {
   FieldLabel,
 } from "~/components/ui/field";
 import { HttpAdminApi } from "~/lib/api/http-admin-api";
-import type { Athlete, Championship, Gender } from "~/lib/api/types";
+import type { Athlete, Gender } from "~/lib/api/types";
 
 const adminApi = new HttpAdminApi();
-
-function getChampionshipName(
-  champ: string | Championship | null | undefined,
-): string {
-  if (!champ) return "—";
-  if (typeof champ === "object") return `${champ.name} (${champ.seasonYear})`;
-  return champ;
-}
 
 export function meta() {
   return [{ title: "Athletes — FantaBeach Admin" }];
@@ -57,36 +58,39 @@ export default function AthletesPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Athlete | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Athlete | null>(null);
+  const [championshipId, setChampionshipId] = useState<string>("");
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 20 });
-  const [championshipFilter, setChampionshipFilter] = useState<string>("all");
-  const [rawSearch, setRawSearch] = useState("");
-  const [search, setSearch] = useState("");
-  const debouncer = useDebouncer(setSearch, { wait: 300 });
+  const importRef = useRef<HTMLInputElement>(null);
 
   const { data: championships = [] } = useQuery({
     queryKey: ["championships"],
     queryFn: () => adminApi.getChampionships(),
   });
 
+  // Auto-select first championship
+  useEffect(() => {
+    if (championships.length > 0 && !championshipId) {
+      setChampionshipId(championships[0].id);
+    }
+  }, [championships, championshipId]);
+
   const { data: athletesData, isLoading } = useQuery({
     queryKey: [
       "athletes",
       {
-        championshipId:
-          championshipFilter === "all" ? undefined : championshipFilter,
-        search: search || undefined,
+        championshipId,
         page: pagination.pageIndex + 1,
         limit: pagination.pageSize,
       },
     ],
     queryFn: () =>
       adminApi.getAthletes({
-        championshipId:
-          championshipFilter === "all" ? undefined : championshipFilter,
-        search: search || undefined,
+        championshipId,
         page: pagination.pageIndex + 1,
         limit: pagination.pageSize,
       }),
+    enabled: !!championshipId,
   });
 
   const athletes = athletesData?.items ?? [];
@@ -97,11 +101,8 @@ export default function AthletesPage() {
       firstName: string;
       lastName: string;
       gender: Gender;
+      rank: number;
       championshipId: string;
-      pictureUrl?: string;
-      entryPoints: number;
-      globalPoints: number;
-      fantacoinCost: number;
     }) => adminApi.createAthlete(input),
     onSuccess: () => {
       toast.success("Athlete created");
@@ -120,12 +121,7 @@ export default function AthletesPage() {
       id: string;
       firstName: string;
       lastName: string;
-      gender: Gender;
-      championshipId: string;
-      pictureUrl?: string;
-      entryPoints: number;
-      globalPoints: number;
-      fantacoinCost: number;
+      rank: number;
     }) => adminApi.updateAthlete(id, input),
     onSuccess: () => {
       toast.success("Athlete updated");
@@ -136,26 +132,50 @@ export default function AthletesPage() {
       toast.error(e instanceof Error ? e.message : "Update failed"),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => adminApi.deleteAthlete(id),
+    onSuccess: () => {
+      toast.success("Athlete deleted");
+      void queryClient.invalidateQueries({ queryKey: ["athletes"] });
+      setDeleteTarget(null);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Delete failed"),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: (file: File) => adminApi.importAthletes(file),
+    onSuccess: (result) => {
+      toast.success(
+        `Import complete: ${result.created} created, ${result.updated} updated`,
+      );
+      if (result.errors.length > 0) {
+        toast.warning(`${result.errors.length} rows had errors`);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["athletes"] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Import failed"),
+  });
+
   const form = useForm({
     defaultValues: {
       firstName: "",
       lastName: "",
-      gender: "M" as Gender,
+      gender: "MALE" as Gender,
+      rank: 1,
       championshipId: "",
-      pictureUrl: "",
-      entryPoints: 0,
-      globalPoints: 0,
-      fantacoinCost: 0,
     },
     onSubmit: async ({ value }) => {
-      const payload = {
-        ...value,
-        pictureUrl: value.pictureUrl || undefined,
-      };
       if (editing) {
-        await updateMutation.mutateAsync({ id: editing._id, ...payload });
+        await updateMutation.mutateAsync({
+          id: editing.id,
+          firstName: value.firstName,
+          lastName: value.lastName,
+          rank: value.rank,
+        });
       } else {
-        await createMutation.mutateAsync(payload);
+        await createMutation.mutateAsync(value);
       }
     },
   });
@@ -165,12 +185,9 @@ export default function AthletesPage() {
     form.reset({
       firstName: "",
       lastName: "",
-      gender: "M",
-      championshipId: championships[0]?._id ?? "",
-      pictureUrl: "",
-      entryPoints: 0,
-      globalPoints: 0,
-      fantacoinCost: 0,
+      gender: "MALE",
+      rank: 1,
+      championshipId: (championshipId || championships[0]?.id) ?? "",
     });
     setOpen(true);
   }
@@ -182,22 +199,23 @@ export default function AthletesPage() {
 
   useEffect(() => {
     if (open && editing) {
-      const champId =
-        typeof editing.championshipId === "object"
-          ? editing.championshipId._id
-          : editing.championshipId;
       form.reset({
         firstName: editing.firstName,
         lastName: editing.lastName,
         gender: editing.gender,
-        championshipId: champId,
-        pictureUrl: editing.pictureUrl ?? "",
-        entryPoints: editing.entryPoints,
-        globalPoints: editing.globalPoints,
-        fantacoinCost: editing.fantacoinCost,
+        rank: editing.rank,
+        championshipId: editing.championshipId,
       });
     }
   }, [open, editing]);
+
+  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      importMutation.mutate(file);
+    }
+    e.target.value = "";
+  }
 
   const isPending = createMutation.isPending || updateMutation.isPending;
 
@@ -205,277 +223,281 @@ export default function AthletesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Athletes</h1>
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            setOpen(o);
-            if (!o) {
-              setEditing(null);
-              form.reset();
-            }
-          }}
-        >
-          <Button onClick={openCreate}>
-            <PlusIcon className="size-4" />
-            New Athlete
+        <div className="flex items-center gap-2">
+          <input
+            ref={importRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={handleImport}
+          />
+          <Button
+            variant="outline"
+            onClick={() => importRef.current?.click()}
+            disabled={importMutation.isPending}
+          >
+            <UploadIcon className="size-4" />
+            {importMutation.isPending ? "Importing…" : "Import CSV"}
           </Button>
-          <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>
-                {editing ? "Edit Athlete" : "New Athlete"}
-              </DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void form.handleSubmit();
-              }}
-              className="space-y-4"
-            >
-              <FieldGroup>
-                <div className="grid grid-cols-2 gap-3">
-                  <form.Field
-                    name="firstName"
-                    validators={{
-                      onChange: ({ value }) =>
-                        !value.trim() ? "Required" : undefined,
-                    }}
-                  >
-                    {(field) => (
-                      <Field
-                        data-invalid={
-                          field.state.meta.isTouched &&
-                          field.state.meta.errors.length > 0
-                        }
-                      >
-                        <FieldLabel htmlFor={field.name}>First Name</FieldLabel>
-                        <Input
-                          id={field.name}
-                          value={field.state.value}
-                          onBlur={field.handleBlur}
-                          onChange={(e) => field.handleChange(e.target.value)}
-                        />
-                        <FieldError
-                          errors={field.state.meta.errors.map((e) => ({
-                            message: String(e),
-                          }))}
-                        />
-                      </Field>
-                    )}
-                  </form.Field>
-
-                  <form.Field
-                    name="lastName"
-                    validators={{
-                      onChange: ({ value }) =>
-                        !value.trim() ? "Required" : undefined,
-                    }}
-                  >
-                    {(field) => (
-                      <Field
-                        data-invalid={
-                          field.state.meta.isTouched &&
-                          field.state.meta.errors.length > 0
-                        }
-                      >
-                        <FieldLabel htmlFor={field.name}>Last Name</FieldLabel>
-                        <Input
-                          id={field.name}
-                          value={field.state.value}
-                          onBlur={field.handleBlur}
-                          onChange={(e) => field.handleChange(e.target.value)}
-                        />
-                        <FieldError
-                          errors={field.state.meta.errors.map((e) => ({
-                            message: String(e),
-                          }))}
-                        />
-                      </Field>
-                    )}
-                  </form.Field>
-                </div>
-
-                <form.Field name="gender">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel>Gender</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v as Gender)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select gender">
-                            {(value) =>
-                              value === "M"
-                                ? "Men"
-                                : value === "F"
-                                  ? "Women"
-                                  : undefined
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="M">Men</SelectItem>
-                          <SelectItem value="F">Women</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  )}
-                </form.Field>
-
-                <form.Field
-                  name="championshipId"
-                  validators={{
-                    onChange: ({ value }) =>
-                      !value ? "Championship is required" : undefined,
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
+          <Dialog
+            open={open}
+            onOpenChange={(o) => {
+              setOpen(o);
+              if (!o) {
+                setEditing(null);
+                form.reset();
+              }
+            }}
+          >
+            <Button onClick={openCreate}>
+              <PlusIcon className="size-4" />
+              New Athlete
+            </Button>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>
+                  {editing ? "Edit Athlete" : "New Athlete"}
+                </DialogTitle>
+              </DialogHeader>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void form.handleSubmit();
+                }}
+                className="space-y-4"
+              >
+                <FieldGroup>
+                  <div className="grid grid-cols-2 gap-3">
+                    <form.Field
+                      name="firstName"
+                      validators={{
+                        onChange: ({ value }) =>
+                          !value.trim() ? "Required" : undefined,
+                      }}
                     >
-                      <FieldLabel>Championship</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v ?? "")}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select championship">
-                            {(value) => {
-                              if (value == null || value === "")
-                                return undefined;
-                              const c = championships.find(
-                                (ch) => ch._id === String(value),
-                              );
-                              return c
-                                ? `${c.name} (${c.seasonYear})`
-                                : "Select championship";
-                            }}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {championships.map((c) => (
-                            <SelectItem key={c._id} value={c._id}>
-                              {c.name} ({c.seasonYear})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-
-                <div className="grid grid-cols-3 gap-3">
-                  {(
-                    [
-                      { name: "fantacoinCost", label: "FC Cost" },
-                      { name: "entryPoints", label: "Entry Pts" },
-                      { name: "globalPoints", label: "Global Pts" },
-                    ] as const
-                  ).map(({ name, label }) => (
-                    <form.Field key={name} name={name}>
                       {(field) => (
-                        <Field>
-                          <FieldLabel htmlFor={field.name}>{label}</FieldLabel>
+                        <Field
+                          data-invalid={
+                            field.state.meta.isTouched &&
+                            field.state.meta.errors.length > 0
+                          }
+                        >
+                          <FieldLabel htmlFor={field.name}>
+                            First Name
+                          </FieldLabel>
                           <Input
                             id={field.name}
-                            type="number"
-                            min={0}
                             value={field.state.value}
                             onBlur={field.handleBlur}
-                            onChange={(e) =>
-                              field.handleChange(Number(e.target.value))
-                            }
+                            onChange={(e) => field.handleChange(e.target.value)}
+                          />
+                          <FieldError
+                            errors={field.state.meta.errors.map((e) => ({
+                              message: String(e),
+                            }))}
                           />
                         </Field>
                       )}
                     </form.Field>
-                  ))}
-                </div>
 
-                <form.Field name="pictureUrl">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel htmlFor={field.name}>
-                        Picture URL (optional)
-                      </FieldLabel>
-                      <Input
-                        id={field.name}
-                        type="url"
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        placeholder="https://..."
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-              </FieldGroup>
-
-              <DialogFooter>
-                <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>
-                  {([canSubmit, isSubmitting]) => (
-                    <Button
-                      type="submit"
-                      disabled={!canSubmit || isSubmitting || isPending}
+                    <form.Field
+                      name="lastName"
+                      validators={{
+                        onChange: ({ value }) =>
+                          !value.trim() ? "Required" : undefined,
+                      }}
                     >
-                      {isSubmitting || isPending
-                        ? "Saving…"
-                        : editing
-                          ? "Save changes"
-                          : "Create"}
-                    </Button>
+                      {(field) => (
+                        <Field
+                          data-invalid={
+                            field.state.meta.isTouched &&
+                            field.state.meta.errors.length > 0
+                          }
+                        >
+                          <FieldLabel htmlFor={field.name}>
+                            Last Name
+                          </FieldLabel>
+                          <Input
+                            id={field.name}
+                            value={field.state.value}
+                            onBlur={field.handleBlur}
+                            onChange={(e) => field.handleChange(e.target.value)}
+                          />
+                          <FieldError
+                            errors={field.state.meta.errors.map((e) => ({
+                              message: String(e),
+                            }))}
+                          />
+                        </Field>
+                      )}
+                    </form.Field>
+                  </div>
+
+                  {!editing && (
+                    <form.Field name="gender">
+                      {(field) => (
+                        <Field>
+                          <FieldLabel>Gender</FieldLabel>
+                          <Select
+                            value={field.state.value}
+                            onValueChange={(v) =>
+                              field.handleChange(v as Gender)
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select gender">
+                                {(value) =>
+                                  value === "MALE"
+                                    ? "Men"
+                                    : value === "FEMALE"
+                                      ? "Women"
+                                      : undefined
+                                }
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="MALE">Men</SelectItem>
+                              <SelectItem value="FEMALE">Women</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                      )}
+                    </form.Field>
                   )}
-                </form.Subscribe>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+
+                  {!editing && (
+                    <form.Field
+                      name="championshipId"
+                      validators={{
+                        onChange: ({ value }) =>
+                          !value ? "Championship is required" : undefined,
+                      }}
+                    >
+                      {(field) => (
+                        <Field
+                          data-invalid={
+                            field.state.meta.isTouched &&
+                            field.state.meta.errors.length > 0
+                          }
+                        >
+                          <FieldLabel>Championship</FieldLabel>
+                          <Select
+                            value={field.state.value}
+                            onValueChange={(v) => field.handleChange(v ?? "")}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select championship">
+                                {(value) => {
+                                  if (!value) return undefined;
+                                  const c = championships.find(
+                                    (ch) => ch.id === String(value),
+                                  );
+                                  return c
+                                    ? `${c.name} (${c.seasonYear})`
+                                    : "Select championship";
+                                }}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {championships.map((c) => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {c.name} ({c.seasonYear})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FieldError
+                            errors={field.state.meta.errors.map((e) => ({
+                              message: String(e),
+                            }))}
+                          />
+                        </Field>
+                      )}
+                    </form.Field>
+                  )}
+
+                  <form.Field
+                    name="rank"
+                    validators={{
+                      onChange: ({ value }) =>
+                        value < 1 ? "Rank must be at least 1" : undefined,
+                    }}
+                  >
+                    {(field) => (
+                      <Field
+                        data-invalid={
+                          field.state.meta.isTouched &&
+                          field.state.meta.errors.length > 0
+                        }
+                      >
+                        <FieldLabel htmlFor={field.name}>World Rank</FieldLabel>
+                        <Input
+                          id={field.name}
+                          type="number"
+                          min={1}
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChange={(e) =>
+                            field.handleChange(Number(e.target.value))
+                          }
+                        />
+                        <FieldError
+                          errors={field.state.meta.errors.map((e) => ({
+                            message: String(e),
+                          }))}
+                        />
+                      </Field>
+                    )}
+                  </form.Field>
+                </FieldGroup>
+
+                <DialogFooter>
+                  <form.Subscribe
+                    selector={(s) => [s.canSubmit, s.isSubmitting]}
+                  >
+                    {([canSubmit, isSubmitting]) => (
+                      <Button
+                        type="submit"
+                        disabled={!canSubmit || isSubmitting || isPending}
+                      >
+                        {isSubmitting || isPending
+                          ? "Saving…"
+                          : editing
+                            ? "Save changes"
+                            : "Create"}
+                      </Button>
+                    )}
+                  </form.Subscribe>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-3">
-        <div className="relative flex-1 max-w-xs">
-          <SearchIcon className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search athletes..."
-            value={rawSearch}
-            onChange={(e) => {
-              setRawSearch(e.target.value);
-              debouncer.maybeExecute(e.target.value);
-            }}
-          />
-        </div>
+      {/* Championship filter */}
+      <div className="flex items-center gap-3">
         <Select
-          value={championshipFilter}
+          value={championshipId}
           onValueChange={(v) => {
-            setChampionshipFilter(v ?? "all");
+            setChampionshipId(v ?? "");
             setPagination((p) => ({ ...p, pageIndex: 0 }));
           }}
         >
-          <SelectTrigger className="w-52">
-            <SelectValue placeholder="All championships">
+          <SelectTrigger className="w-64">
+            <SelectValue placeholder="Select championship">
               {(value) => {
-                if (value == null || value === "all")
-                  return "All Championships";
-                const c = championships.find((ch) => ch._id === String(value));
-                return c ? `${c.name} (${c.seasonYear})` : "All championships";
+                if (!value) return "Select championship";
+                const c = championships.find((ch) => ch.id === String(value));
+                return c
+                  ? `${c.name} (${c.seasonYear})`
+                  : "Select championship";
               }}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Championships</SelectItem>
             {championships.map((c) => (
-              <SelectItem key={c._id} value={c._id}>
+              <SelectItem key={c.id} value={c.id}>
                 {c.name} ({c.seasonYear})
               </SelectItem>
             ))}
@@ -483,24 +505,32 @@ export default function AthletesPage() {
         </Select>
       </div>
 
+      {/* Table */}
       <div className="rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Gender</TableHead>
-              <TableHead>Championship</TableHead>
-              <TableHead>Cost</TableHead>
-              <TableHead>Avg Score</TableHead>
-              <TableHead>Entry Pts</TableHead>
+              <TableHead>Rank</TableHead>
+              <TableHead>Cost (FC)</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading ? (
+            {!championshipId ? (
+              <TableRow>
+                <TableCell
+                  colSpan={5}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  Select a championship to view athletes.
+                </TableCell>
+              </TableRow>
+            ) : isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 7 }).map((_, j) => (
+                  {Array.from({ length: 5 }).map((_, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full" />
                     </TableCell>
@@ -510,7 +540,7 @@ export default function AthletesPage() {
             ) : athletes.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={5}
                   className="h-24 text-center text-muted-foreground"
                 >
                   No athletes found.
@@ -518,31 +548,34 @@ export default function AthletesPage() {
               </TableRow>
             ) : (
               athletes.map((a) => (
-                <TableRow key={a._id}>
+                <TableRow key={a.id}>
                   <TableCell className="font-medium">
                     {a.firstName} {a.lastName}
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">
-                      {a.gender === "M" ? "Men" : "Women"}
+                      {a.gender === "MALE" ? "Men" : "Women"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {getChampionshipName(
-                      a.championshipId as string | Championship,
-                    )}
-                  </TableCell>
-                  <TableCell>{a.fantacoinCost} FC</TableCell>
-                  <TableCell>{a.averageFantasyScore.toFixed(1)}</TableCell>
-                  <TableCell>{a.entryPoints}</TableCell>
+                  <TableCell>#{a.rank}</TableCell>
+                  <TableCell>{a.cost} FC</TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openEdit(a)}
-                    >
-                      <PencilIcon className="size-4" />
-                    </Button>
+                    <div className="flex items-center gap-1 justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEdit(a)}
+                      >
+                        <PencilIcon className="size-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteTarget(a)}
+                      >
+                        <Trash2Icon className="size-4 text-destructive" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -582,6 +615,37 @@ export default function AthletesPage() {
           </div>
         </div>
       )}
+
+      {/* Delete confirmation */}
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => {
+          if (!o) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete athlete?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete{" "}
+              <strong>
+                {deleteTarget?.firstName} {deleteTarget?.lastName}
+              </strong>
+              . This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                deleteTarget && deleteMutation.mutate(deleteTarget.id)
+              }
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

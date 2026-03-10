@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, UploadIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
 import { Input } from "~/components/ui/input";
@@ -48,6 +48,7 @@ export default function ChampionshipsPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Championship | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   const { data: championships = [], isLoading } = useQuery({
     queryKey: ["championships"],
     queryFn: () => adminApi.getChampionships(),
@@ -84,15 +85,30 @@ export default function ChampionshipsPage() {
       toast.error(e instanceof Error ? e.message : "Update failed"),
   });
 
+  const importMutation = useMutation({
+    mutationFn: (file: File) => adminApi.importChampionships(file),
+    onSuccess: (result) => {
+      toast.success(
+        `Import complete: ${result.created} created, ${result.updated} updated`,
+      );
+      if (result.errors.length > 0) {
+        toast.warning(`${result.errors.length} rows had errors`);
+      }
+      void queryClient.invalidateQueries({ queryKey: ["championships"] });
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Import failed"),
+  });
+
   const form = useForm({
     defaultValues: {
       name: "",
-      gender: "M" as Gender,
+      gender: "MALE" as Gender,
       seasonYear: new Date().getFullYear(),
     },
     onSubmit: async ({ value }) => {
       if (editing) {
-        await updateMutation.mutateAsync({ id: editing._id, ...value });
+        await updateMutation.mutateAsync({ id: editing.id, ...value });
       } else {
         await createMutation.mutateAsync(value);
       }
@@ -101,7 +117,11 @@ export default function ChampionshipsPage() {
 
   function openCreate() {
     setEditing(null);
-    form.reset({ name: "", gender: "M", seasonYear: new Date().getFullYear() });
+    form.reset({
+      name: "",
+      gender: "MALE",
+      seasonYear: new Date().getFullYear(),
+    });
     setOpen(true);
   }
 
@@ -122,152 +142,181 @@ export default function ChampionshipsPage() {
 
   const isPending = createMutation.isPending || updateMutation.isPending;
 
+  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      importMutation.mutate(file);
+    }
+    e.target.value = "";
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Championships</h1>
-        <Dialog
-          open={open}
-          onOpenChange={(o) => {
-            setOpen(o);
-            if (!o) {
-              setEditing(null);
-              form.reset();
-            }
-          }}
-        >
-          <Button onClick={openCreate}>
-            <PlusIcon className="size-4" />
-            New Championship
+        <div className="flex items-center gap-2">
+          <input
+            ref={importRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            className="hidden"
+            onChange={handleImport}
+          />
+          <Button
+            variant="outline"
+            onClick={() => importRef.current?.click()}
+            disabled={importMutation.isPending}
+          >
+            <UploadIcon className="size-4" />
+            {importMutation.isPending ? "Importing…" : "Import CSV"}
           </Button>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {editing ? "Edit Championship" : "New Championship"}
-              </DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void form.handleSubmit();
-              }}
-              className="space-y-4"
-            >
-              <FieldGroup>
-                <form.Field
-                  name="name"
-                  validators={{
-                    onChange: ({ value }) =>
-                      !value.trim() ? "Name is required" : undefined,
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel htmlFor={field.name}>Name</FieldLabel>
-                      <Input
-                        id={field.name}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        placeholder="e.g. AVP 2025"
-                      />
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-
-                <form.Field name="gender">
-                  {(field) => (
-                    <Field>
-                      <FieldLabel>Gender</FieldLabel>
-                      <Select
-                        value={field.state.value}
-                        onValueChange={(v) => field.handleChange(v as Gender)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select gender">
-                            {(value) =>
-                              value === "M"
-                                ? "Men"
-                                : value === "F"
-                                  ? "Women"
-                                  : undefined
-                            }
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="M">Men</SelectItem>
-                          <SelectItem value="F">Women</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  )}
-                </form.Field>
-
-                <form.Field
-                  name="seasonYear"
-                  validators={{
-                    onChange: ({ value }) =>
-                      value < 2020 || value > 2100
-                        ? "Enter a valid year (2020-2100)"
-                        : undefined,
-                  }}
-                >
-                  {(field) => (
-                    <Field
-                      data-invalid={
-                        field.state.meta.isTouched &&
-                        field.state.meta.errors.length > 0
-                      }
-                    >
-                      <FieldLabel htmlFor={field.name}>Season Year</FieldLabel>
-                      <Input
-                        id={field.name}
-                        type="number"
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) =>
-                          field.handleChange(Number(e.target.value))
+          <Dialog
+            open={open}
+            onOpenChange={(o) => {
+              setOpen(o);
+              if (!o) {
+                setEditing(null);
+                form.reset();
+              }
+            }}
+          >
+            <Button onClick={openCreate}>
+              <PlusIcon className="size-4" />
+              New Championship
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {editing ? "Edit Championship" : "New Championship"}
+                </DialogTitle>
+              </DialogHeader>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void form.handleSubmit();
+                }}
+                className="space-y-4"
+              >
+                <FieldGroup>
+                  <form.Field
+                    name="name"
+                    validators={{
+                      onChange: ({ value }) =>
+                        !value.trim() ? "Name is required" : undefined,
+                    }}
+                  >
+                    {(field) => (
+                      <Field
+                        data-invalid={
+                          field.state.meta.isTouched &&
+                          field.state.meta.errors.length > 0
                         }
-                      />
-                      <FieldError
-                        errors={field.state.meta.errors.map((e) => ({
-                          message: String(e),
-                        }))}
-                      />
-                    </Field>
-                  )}
-                </form.Field>
-              </FieldGroup>
+                      >
+                        <FieldLabel htmlFor={field.name}>Name</FieldLabel>
+                        <Input
+                          id={field.name}
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChange={(e) => field.handleChange(e.target.value)}
+                          placeholder="e.g. Campionato Italiano 2026"
+                        />
+                        <FieldError
+                          errors={field.state.meta.errors.map((e) => ({
+                            message: String(e),
+                          }))}
+                        />
+                      </Field>
+                    )}
+                  </form.Field>
 
-              <DialogFooter>
-                <form.Subscribe selector={(s) => [s.canSubmit, s.isSubmitting]}>
-                  {([canSubmit, isSubmitting]) => (
-                    <Button
-                      type="submit"
-                      disabled={!canSubmit || isSubmitting || isPending}
-                    >
-                      {isSubmitting || isPending
-                        ? "Saving…"
-                        : editing
-                          ? "Save changes"
-                          : "Create"}
-                    </Button>
-                  )}
-                </form.Subscribe>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                  <form.Field name="gender">
+                    {(field) => (
+                      <Field>
+                        <FieldLabel>Gender</FieldLabel>
+                        <Select
+                          value={field.state.value}
+                          onValueChange={(v) => field.handleChange(v as Gender)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select gender">
+                              {(value) =>
+                                value === "MALE"
+                                  ? "Men"
+                                  : value === "FEMALE"
+                                    ? "Women"
+                                    : undefined
+                              }
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="MALE">Men</SelectItem>
+                            <SelectItem value="FEMALE">Women</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                    )}
+                  </form.Field>
+
+                  <form.Field
+                    name="seasonYear"
+                    validators={{
+                      onChange: ({ value }) =>
+                        value < 2020 || value > 2100
+                          ? "Enter a valid year (2020-2100)"
+                          : undefined,
+                    }}
+                  >
+                    {(field) => (
+                      <Field
+                        data-invalid={
+                          field.state.meta.isTouched &&
+                          field.state.meta.errors.length > 0
+                        }
+                      >
+                        <FieldLabel htmlFor={field.name}>
+                          Season Year
+                        </FieldLabel>
+                        <Input
+                          id={field.name}
+                          type="number"
+                          value={field.state.value}
+                          onBlur={field.handleBlur}
+                          onChange={(e) =>
+                            field.handleChange(Number(e.target.value))
+                          }
+                        />
+                        <FieldError
+                          errors={field.state.meta.errors.map((e) => ({
+                            message: String(e),
+                          }))}
+                        />
+                      </Field>
+                    )}
+                  </form.Field>
+                </FieldGroup>
+
+                <DialogFooter>
+                  <form.Subscribe
+                    selector={(s) => [s.canSubmit, s.isSubmitting]}
+                  >
+                    {([canSubmit, isSubmitting]) => (
+                      <Button
+                        type="submit"
+                        disabled={!canSubmit || isSubmitting || isPending}
+                      >
+                        {isSubmitting || isPending
+                          ? "Saving…"
+                          : editing
+                            ? "Save changes"
+                            : "Create"}
+                      </Button>
+                    )}
+                  </form.Subscribe>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="rounded-lg border">
@@ -303,11 +352,11 @@ export default function ChampionshipsPage() {
               </TableRow>
             ) : (
               championships.map((c) => (
-                <TableRow key={c._id}>
+                <TableRow key={c.id}>
                   <TableCell className="font-medium">{c.name}</TableCell>
                   <TableCell>
                     <Badge variant="outline">
-                      {c.gender === "M" ? "Men" : "Women"}
+                      {c.gender === "MALE" ? "Men" : "Women"}
                     </Badge>
                   </TableCell>
                   <TableCell>{c.seasonYear}</TableCell>

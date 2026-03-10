@@ -25,9 +25,9 @@ import type { AuditLog } from "~/lib/api/types";
 
 const adminApi = new HttpAdminApi();
 
-function adminLabel(adminId: AuditLog["adminId"]): string {
-  if (typeof adminId === "object") return adminId.name;
-  return adminId.slice(-8);
+function adminLabel(log: AuditLog): string {
+  if (log.admin) return log.admin.name || log.admin.email;
+  return log.adminId.slice(-8);
 }
 
 function AuditDetailDialog({
@@ -62,8 +62,8 @@ function AuditDetailDialog({
                 Admin
               </p>
               <p className="font-mono">
-                {typeof log.adminId === "object"
-                  ? `${log.adminId.name} (${log.adminId.email})`
+                {log.admin
+                  ? `${log.admin.name} (${log.admin.email})`
                   : log.adminId}
               </p>
             </div>
@@ -250,12 +250,12 @@ export default function AuditLogsPage() {
               </TableRow>
             ) : (
               logs.map((log) => (
-                <TableRow key={log._id}>
+                <TableRow key={log.id}>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {new Date(log.createdAt).toLocaleString()}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    {adminLabel(log.adminId)}
+                    {adminLabel(log)}
                   </TableCell>
                   <TableCell className="font-medium text-sm">
                     {log.action}

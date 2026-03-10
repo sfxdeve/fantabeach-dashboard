@@ -11,6 +11,7 @@ export default [
     route("tournaments/:id", "routes/admin/tournament-detail.tsx"),
     route("leagues", "routes/admin/leagues.tsx"),
     route("credits", "routes/admin/credits.tsx"),
+    route("users", "routes/admin/users.tsx"),
     route("audit-logs", "routes/admin/audit-logs.tsx"),
   ]),
 ] satisfies RouteConfig;
